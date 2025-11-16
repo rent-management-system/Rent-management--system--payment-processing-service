@@ -1,293 +1,264 @@
 # Payment Processing Microservice
 
-This microservice handles payment initiation, verification, and status updates for a Rental Management System, using FastAPI, PostgreSQL, and Chapa.co's sandbox API.
-
 ## Table of Contents
-- [Setup](#setup)
-- [Environment Variables](#environment-variables)
-- [Database Setup](#database-setup)
-- [Running the Application](#running-the-application)
+- [Introduction](#introduction)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Technologies Used](#technologies-used)
+- [Setup Guide](#setup-guide)
+  - [Prerequisites](#prerequisites)
+  - [Environment Variables](#environment-variables)
+  - [Installation](#installation)
+  - [Database Setup](#database-setup)
+  - [Running the Application](#running-the-application)
 - [API Endpoints](#api-endpoints)
-- [Chapa Sandbox Setup](#chapa-sandbox-setup)
-- [Frontend Integration Guidance](#frontend-integration-guidance)
-- [Demo Walkthrough](#demo-walkthrough)
-- [Testing](#testing)
+  - [Authentication](#authentication)
+  - [Payments](#payments)
+  - [Webhooks](#webhooks)
+  - [Health Check](#health-check)
+  - [Metrics](#metrics)
+- [Scheduled Tasks](#scheduled-tasks)
+- [Inter-Service Communication](#inter-service-communication)
+- [Logging](#logging)
+- [Error Handling](#error-handling)
+- [Contributing](#contributing)
+- [License](#license)
 
-## Setup
+## Introduction
+The Payment Processing Microservice is a core component of the Rent Management System, responsible for handling all payment-related operations. It facilitates secure and efficient payment initiation, status tracking, and webhook processing, primarily integrating with the Chapa payment gateway. This service ensures that property listing payments are processed, verified, and communicated to relevant services within the ecosystem.
 
-1.  **Clone the repository:**
+## Features
+-   **Payment Initiation**: Securely initiates payments through the Chapa payment gateway.
+-   **Idempotency**: Prevents duplicate payment processing for the same request.
+-   **Payment Status Tracking**: Monitors and updates the status of payments (PENDING, SUCCESS, FAILED).
+-   **Chapa Webhook Handling**: Processes real-time payment status updates from Chapa.
+-   **Scheduled Payment Timeout**: Automatically marks pending payments as FAILED after a configurable period.
+-   **Inter-Service Communication**: Integrates with User Management, Property Listing, and Notification services.
+-   **Authentication & Authorization**: Secures API endpoints using JWT and API keys.
+-   **Caching**: Utilizes Redis for caching user authentication data to improve performance.
+-   **Rate Limiting**: Implements API rate limiting using Redis to prevent abuse.
+-   **Structured Logging**: Provides detailed, structured logs for better observability and debugging.
+-   **Health Checks & Metrics**: Offers endpoints for monitoring service health and operational metrics.
+
+## Architecture
+The Payment Processing Microservice operates within a broader microservices ecosystem. Below is a C4 Context diagram illustrating its interactions with other key systems.
+
+```mermaid
+C4Context
+    title System Context for Rent Management System
+
+    System_Ext(User, "User", "End-users interacting with the system")
+    System_Ext(Landlord, "Landlord", "Property owners using the system")
+    System_Ext(ChapaPaymentGateway, "Chapa Payment Gateway", "External payment processing service")
+    System_Ext(Redis, "Redis", "External caching and rate limiting service")
+
+    System(UserManagementService, "User Management Service", "Manages user authentication and profiles")
+    System(PropertyListingService, "Property Listing Service", "Manages property listings and approvals")
+    System(NotificationService, "Notification Service", "Handles sending notifications to users")
+    System(PaymentProcessingMicroservice, "Payment Processing Microservice", "Handles payment initiation, status tracking, and webhooks")
+
+    Rel(User, PaymentProcessingMicroservice, "Initiates payments via")
+    Rel(Landlord, PaymentProcessingMicroservice, "Initiates payments via")
+    Rel(PaymentProcessingMicroservice, ChapaPaymentGateway, "Initiates and verifies payments with")
+    Rel(ChapaPaymentGateway, PaymentProcessingMicroservice, "Sends webhook notifications to")
+    Rel(PaymentProcessingMicroservice, UserManagementService, "Verifies user tokens and fetches user details from")
+    Rel(PaymentProcessingMicroservice, PropertyListingService, "Notifies about payment status (success/failure)")
+    Rel(PaymentProcessingMicroservice, NotificationService, "Sends payment-related notifications via")
+    Rel(PaymentProcessingMicroservice, Redis, "Uses for caching and rate limiting")
+    Rel(PaymentProcessingMicroservice, UserManagementService, "Proxies authentication requests to")
+```
+
+## Technologies Used
+-   **FastAPI**: High-performance web framework for building APIs.
+-   **SQLAlchemy (Async)**: Asynchronous ORM for interacting with PostgreSQL.
+-   **PostgreSQL**: Relational database for storing payment records.
+-   **Pydantic**: Data validation and settings management.
+-   **Chapa API**: Integration with the Chapa payment gateway.
+-   **Redis**: In-memory data store for caching user authentication and API rate limiting.
+-   **APScheduler**: For scheduling background tasks, specifically payment timeouts.
+-   **httpx**: A fully featured asynchronous HTTP client for making requests to external services.
+-   **python-jose**: For JSON Web Token (JWT) handling.
+-   **cryptography**: For secure data encryption (Fernet).
+-   **structlog**: For structured, machine-readable logging.
+-   **Docker**: For containerization and deployment.
+
+## Setup Guide
+
+### Prerequisites
+Before you begin, ensure you have the following installed:
+-   Python 3.10+
+-   Docker and Docker Compose (for local development with services like PostgreSQL and Redis)
+-   `pip` (Python package installer)
+
+### Environment Variables
+Create a `.env` file in the root directory of the project based on the `.env.example` (which you should create if it doesn't exist).
+
+```
+# .env.example
+DATABASE_URL="postgresql+asyncpg://user:password@host:port/dbname"
+CHAPA_API_KEY="your_chapa_api_key"
+CHAPA_SECRET_KEY="your_chapa_secret_key"
+CHAPA_WEBHOOK_SECRET="your_chapa_webhook_secret"
+JWT_SECRET="your_jwt_secret_key_for_signing_tokens"
+USER_MANAGEMENT_URL="http://localhost:8001" # URL of the User Management Service
+NOTIFICATION_SERVICE_URL="http://localhost:8002" # URL of the Notification Service
+PROPERTY_LISTING_SERVICE_URL="http://localhost:8003" # URL of the Property Listing Service
+ENCRYPTION_KEY="your_fernet_encryption_key_32_url_safe_base64_bytes" # Generate with `Fernet.generate_key().decode()`
+REDIS_URL="redis://localhost:6379/0"
+PAYMENT_SERVICE_API_KEY="your_service_to_service_api_key" # API key for this service to authenticate with others
+FRONTEND_REDIRECT_URL="http://localhost:3000/payment-status" # Frontend URL for post-payment redirection
+```
+**Note**: For `ENCRYPTION_KEY`, you can generate one using `from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())` in a Python console.
+
+### Installation
+1.  **Clone the repository**:
     ```bash
     git clone <repository_url>
     cd Rent-management--system -payment-processing-service
     ```
 
-2.  **Create a virtual environment and install dependencies:**
+2.  **Create a virtual environment** (recommended):
     ```bash
-    python3.10 -m venv venv
-    source venv/bin/activate
+    python -m venv venv
+    source venv/bin/activate # On Windows: venv\Scripts\activate
+    ```
+
+3.  **Install dependencies**:
+    ```bash
     pip install -r requirements.txt
     ```
 
-## Environment Variables
+### Database Setup
+This service uses PostgreSQL. You can set up a local PostgreSQL instance using Docker Compose or a standalone installation.
 
-Create a `.env` file in the root directory based on `.env.example`:
+1.  **Ensure your `DATABASE_URL` in `.env` is correctly configured.**
+2.  **Run the migration script**:
+    ```bash
+    ./migrate.sh
+    ```
+    This script will apply the `sql/schema.sql` to your database. Make sure `psql` is available in your PATH or adjust the script accordingly.
 
-```ini
-CHAPA_API_KEY="your_chapa_api_key_here"
-CHAPA_SECRET_KEY="your_chapa_secret_key_here"
-CHAPA_WEBHOOK_SECRET="your_chapa_webhook_secret_key_here" # Used for HMAC-SHA256 webhook verification
-JWT_SECRET="your_jwt_secret_key_here"
-USER_MANAGEMENT_URL="http://user-management:8000/api/v1"
-DATABASE_URL="postgresql+asyncpg://user:password@host:port/database"
-NOTIFICATION_SERVICE_URL="http://notification-service:8000/api/v1"
-PROPERTY_LISTING_SERVICE_URL="http://property-listing-service:8000/api/v1"
-ENCRYPTION_KEY="a_32_byte_secret_key_for_aes_encryption" # Must be 32 bytes for AES-256
-REDIS_URL="redis://localhost:6379/0" # For rate limiting and optional caching
-BASE_URL="http://localhost:8000" # The public base URL of this service
-```
+### Running the Application
+1.  **Start dependent services**: Ensure your PostgreSQL, Redis, User Management, Property Listing, and Notification services are running and accessible as configured in your `.env` file.
+2.  **Run the FastAPI application**:
+    ```bash
+    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ```
+    The `--reload` flag is useful for development as it restarts the server on code changes. For production, remove this flag.
 
-## Database Setup
-
-Ensure you have a PostgreSQL database running and accessible. Update the `DATABASE_URL` in your `.env` file.
-
-Run the migration script to create the `Payments` table and seed initial data:
-
-```bash
-./migrate.sh
-```
-
-## Running the Application
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
+The API documentation will be available at `http://localhost:8000/docs` (Swagger UI) and `http://localhost:8000/redoc` (ReDoc).
 
 ## API Endpoints
 
-(Documentation will be generated here)
+### Authentication
+-   **`POST /token`**
+    -   **Description**: Logs in a user by proxying the request to the User Management microservice and returns an access token.
+    -   **Permissions**: Public
+    -   **User Types**: Any authenticated user (via User Management Service)
+    -   **Parameters**:
+        -   `username` (form data): User's username.
+        -   `password` (form data): User's password.
+    -   **Responses**:
+        -   `200 OK`: Returns JWT access token.
+        -   `401 Unauthorized`: Invalid credentials.
+        -   `503 Service Unavailable`: User Management service is down.
 
-## Chapa Sandbox Setup
+### Payments
+-   **`POST /api/v1/payments/initiate`**
+    -   **Description**: Initiates a payment for a property listing through the Chapa gateway. This endpoint is idempotent.
+    -   **Permissions**: Authenticated (Owner role via JWT or Service-to-Service via API Key)
+    -   **User Types**: Landlord (Owner), Internal Services
+    -   **Parameters (Request Body - `PaymentCreate`)**:
+        -   `request_id` (UUID): Unique ID for idempotency.
+        -   `property_id` (UUID): ID of the property listing.
+        -   `user_id` (UUID): ID of the user initiating the payment.
+        -   `amount` (float): The fixed amount for the payment (currently hardcoded to 500.00 ETB).
+    -   **Responses**:
+        -   `202 Accepted`: Payment initiation successful, returns `PaymentResponse` including `checkout_url`.
+        -   `400 Bad Request`: Invalid input or Chapa initialization failure.
+        -   `401 Unauthorized`: Missing or invalid authentication.
+        -   `403 Forbidden`: User not authorized (e.g., not an Owner).
+        -   `404 Not Found`: User details not found for service-initiated payments.
+        -   `429 Too Many Requests`: Rate limit exceeded.
+        -   `500 Internal Server Error`: Unexpected server error.
 
-1.  Sign up for a Chapa.co sandbox account.
-2.  Obtain your `CHAPA_API_KEY`, `CHAPA_SECRET_KEY`, and configure a `CHAPA_WEBHOOK_SECRET` for signature verification.
-3.  Configure a webhook URL in your Chapa dashboard to point to `YOUR_SERVICE_PUBLIC_URL/api/v1/webhook/chapa`.
+-   **`GET /api/v1/payments/{payment_id}/status`**
+    -   **Description**: Retrieves the current status of a specific payment.
+    -   **Permissions**: Authenticated (User who initiated payment or Admin role)
+    -   **User Types**: Landlord, Admin
+    -   **Parameters (Path)**:
+        -   `payment_id` (UUID): The ID of the payment to retrieve.
+    -   **Responses**:
+        -   `200 OK`: Returns `PaymentResponse` with payment details.
+        -   `401 Unauthorized`: Missing or invalid authentication.
+        -   `403 Forbidden`: User not authorized to view this payment.
+        -   `404 Not Found`: Payment not found.
 
-## Frontend Integration Guidance
+### Webhooks
+-   **`GET/POST /api/v1/webhook/chapa`**
+    -   **Description**: Endpoint for Chapa payment gateway to send real-time payment status updates (POST) or for redirecting users after payment (GET).
+    -   **Permissions**: Public (Chapa gateway)
+    -   **User Types**: N/A (System-to-System)
+    -   **Parameters**:
+        -   **POST (Request Body)**: Chapa webhook payload containing `tx_ref`, `status`, and `meta` data.
+        -   **POST (Header)**: `X-Chapa-Signature` for webhook verification.
+        -   **GET (Query Params)**: `trx_ref` and `status` for redirect.
+    -   **Responses**:
+        -   `200 OK`: Webhook processed successfully.
+        -   `400 Bad Request`: Invalid payload or missing parameters.
+        -   `401 Unauthorized`: Invalid webhook signature.
 
-Here are React.js snippets for integrating with the Payment Processing Microservice:
+### Health Check
+-   **`GET /api/v1/health`**
+    -   **Description**: Performs a health check on the service, including database and Chapa API connectivity.
+    -   **Permissions**: Public
+    -   **User Types**: Monitoring Systems
+    -   **Responses**:
+        -   `200 OK`: Service is healthy.
+        -   `503 Service Unavailable`: Service is unhealthy, details provided in response.
 
-### 1. Initiating a Payment
+### Metrics
+-   **`GET /api/v1/metrics`**
+    -   **Description**: Returns in-memory operational metrics for the service (e.g., total payments, successful payments, webhook calls).
+    -   **Permissions**: Public
+    -   **User Types**: Monitoring Systems
+    -   **Responses**:
+        -   `200 OK`: Returns a JSON object with various metrics.
 
-```jsx
-// components/InitiatePaymentButton.jsx
-import React, { useState } from 'react';
-import axios from 'axios';
-import { v4 as uuidv4 } from 'uuid'; // For generating request_id
+## Scheduled Tasks
+The service includes an asynchronous scheduler (`APScheduler`) to run background tasks:
+-   **`timeout_pending_payments`**: Runs every 24 hours. It queries the database for payments with `PENDING` status that were created more than `PAYMENT_TIMEOUT_DAYS` (configured in `.env`) ago and updates their status to `FAILED`. It also attempts to notify the Property Listing Service about these failed payments.
 
-const InitiatePaymentButton = ({ propertyId, userId, amount, jwtToken }) => {
-  const [loading, setLoading] = useState(false);
-  const [paymentLink, setPaymentLink] = useState(null);
-  const [error, setError] = useState(null);
+## Inter-Service Communication
+This microservice interacts with several other services:
 
-  const handleInitiatePayment = async () => {
-    setLoading(true);
-    setError(null);
-    setPaymentLink(null);
+-   **User Management Service**:
+    -   **Authentication Proxy**: The `/token` endpoint forwards authentication requests to the User Management Service.
+    -   **Token Verification**: During API calls, JWT tokens are verified against the User Management Service.
+    -   **User Details Fetch**: When a service initiates a payment, user details are fetched from the User Management Service for Chapa and notification purposes.
+-   **Property Listing Service**:
+    -   **Payment Confirmation**: After a payment is successfully processed or times out/fails, this service sends a confirmation to the Property Listing Service to update the property's status (e.g., approve listing).
+-   **Notification Service**:
+    -   **Event Notifications**: Sends notifications to users (e.g., payment initiated, payment successful, payment failed) via the Notification Service. It supports multi-language templates.
+-   **Chapa Payment Gateway**:
+    -   **Payment Initialization**: Initiates payment transactions and retrieves checkout URLs.
+    -   **Payment Verification**: Verifies the status of transactions with Chapa's API.
+    -   **Webhook Reception**: Receives real-time updates from Chapa regarding payment status changes.
 
-    try {
-      const response = await axios.post(
-        '/api/v1/payments/initiate', // Adjust base URL as needed
-        {
-          request_id: uuidv4(), // Unique ID for idempotency
-          property_id: propertyId,
-          user_id: userId,
-          amount: amount,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${jwtToken}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-      setPaymentLink(response.data.chapa_tx_ref); // chapa_tx_ref will contain the checkout URL
-    } catch (err) {
-      console.error('Error initiating payment:', err);
-      setError(err.response?.data?.detail || 'Failed to initiate payment');
-    } finally {
-      setLoading(false);
-    }
-  };
+## Logging
+The service uses `structlog` for structured logging. This provides machine-readable logs that are easier to parse, filter, and analyze with log management tools. Logs are output to `stdout` and can be configured for JSON or console rendering.
 
-  return (
-    <div>
-      <button onClick={handleInitiatePayment} disabled={loading}>
-        {loading ? 'Initiating...' : 'Pay to Post Listing'}
-      </button>
-      {paymentLink && (
-        <p>
-          Payment initiated! Complete your payment here:
-          <a href={paymentLink} target="_blank" rel="noopener noreferrer">
-            {paymentLink}
-          </a>
-        </p>
-      )}
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
-    </div>
-  );
-};
+## Error Handling
+-   **HTTPException**: FastAPI's `HTTPException` is used for standard HTTP error responses (e.g., 400 Bad Request, 401 Unauthorized, 404 Not Found).
+-   **Retry Mechanism**: The `app.utils.retry.py` module provides an `@async_retry` decorator for resilient communication with external services, handling transient network issues or service unavailability with exponential backoff.
+-   **Service Unavailable**: Specific `HTTPException`s are raised when dependent services (User Management, Property Listing, Chapa) are unresponsive.
 
-export default InitiatePaymentButton;
-```
+## Contributing
+Contributions are welcome! Please follow standard GitHub flow:
+1.  Fork the repository.
+2.  Create a new branch for your feature or bug fix.
+3.  Make your changes and ensure tests pass.
+4.  Submit a pull request with a clear description of your changes.
 
-### 2. Polling Payment Status
-
-```jsx
-// components/PaymentStatusChecker.jsx
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-
-const PaymentStatusChecker = ({ paymentId, jwtToken }) => {
-  const [status, setStatus] = useState('UNKNOWN');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  const fetchPaymentStatus = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await axios.get(
-        `/api/v1/payments/${paymentId}/status`, // Adjust base URL as needed
-        {
-          headers: {
-            Authorization: `Bearer ${jwtToken}`,
-          },
-        }
-      );
-      setStatus(response.data.status);
-      return response.data.status;
-    } catch (err) {
-      console.error('Error fetching payment status:', err);
-      setError(err.response?.data?.detail || 'Failed to fetch status');
-      return 'ERROR';
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!paymentId || !jwtToken) return;
-
-    let intervalId;
-
-    const pollStatus = async () => {
-      const currentStatus = await fetchPaymentStatus();
-      if (currentStatus === 'SUCCESS' || currentStatus === 'FAILED' || currentStatus === 'ERROR') {
-        clearInterval(intervalId);
-      }
-    };
-
-    // Initial fetch
-    pollStatus();
-
-    // Poll every 5 seconds until success or failure
-    intervalId = setInterval(pollStatus, 5000);
-
-    return () => clearInterval(intervalId);
-  }, [paymentId, jwtToken]);
-
-  return (
-    <div>
-      <h3>Payment Status for ID: {paymentId}</h3>
-      <p>Current Status: <strong>{status}</strong></p>
-      {loading && <p>Checking status...</p>}
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
-      {(status === 'SUCCESS' || status === 'FAILED') && (
-        <p>Payment process completed.</p>
-      )}
-    </div>
-  );
-};
-
-export default PaymentStatusChecker;
-```
-
-## Demo Walkthrough
-
-This section provides a step-by-step guide for demonstrating the Payment Processing Microservice during a school presentation.
-
-**Prerequisites:**
-*   The Payment Processing Microservice is running (e.g., `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload`).
-*   A PostgreSQL database is set up and migrated (`./migrate.sh`).
-*   `.env` file is correctly configured with `CHAPA_API_KEY`, `CHAPA_SECRET_KEY`, `CHAPA_WEBHOOK_SECRET`, `USER_MANAGEMENT_URL`, etc.
-*   Chapa.co sandbox account is set up, and a webhook URL pointing to your public service endpoint (`YOUR_SERVICE_PUBLIC_URL/api/v1/webhook/chapa`) is configured.
-*   (Conceptual) A User Management Microservice is running and can issue JWTs for an 'Owner' role.
-*   (Conceptual) A Property Listing Microservice is running.
-
-**Scenario: Landlord Posts a Property Listing**
-
-1.  **Login as an Owner (Conceptual):**
-    *   Explain that a landlord (Owner) would first log into the Rental Management System, obtaining a JWT token from the User Management Microservice.
-    *   *For demo:* Assume you have a valid JWT for an Owner user (e.g., `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`).
-
-2.  **Initiate Payment for a Listing:**
-    *   The landlord decides to post a new property listing. This action requires a payment.
-    *   **API Call (using `curl` or Postman):**
-        ```bash
-        # Replace <OWNER_JWT_TOKEN>, <PROPERTY_UUID>, <OWNER_USER_UUID> with actual values
-        # Generate a new UUID for request_id for each initiation attempt
-        curl -X POST "http://localhost:8000/api/v1/payments/initiate" \
-             -H "Authorization: Bearer <OWNER_JWT_TOKEN>" \
-             -H "Content-Type: application/json" \
-             -d '{ 
-                   "request_id": "<GENERATE_NEW_UUID_HERE>", 
-                   "property_id": "<PROPERTY_UUID>", 
-                   "user_id": "<OWNER_USER_UUID>", 
-                   "amount": 100.00 
-                 }'
-        ```
-    *   **Expected Output:** A `202 Accepted` response containing the `payment_id` and a `chapa_tx_ref` which is the Chapa checkout URL. Note down the `payment_id` and the `checkout_url`.
-    *   **Demonstrate Idempotency:** Make the *exact same* `curl` request again (same `request_id`). Show that the service returns the *same* `payment_id` and `checkout_url`, and no new payment record is created in the database (you can verify this by checking the database directly or observing logs). This highlights that the payment was not re-initiated.
-
-3.  **Complete Payment via Chapa Sandbox:**
-    *   Open the `checkout_url` obtained in the previous step in a web browser.
-    *   Explain that this is the Chapa.co sandbox payment page.
-    *   Select a payment method (e.g., CBE Birr, Telebirr, or a test card like `4111 1111 1111 1111` for Visa).
-    *   Complete the payment process. Chapa will simulate a successful transaction.
-    *   Explain that upon successful payment, Chapa will redirect back to the `return_url` configured during initiation (e.g., your frontend's payment status page).
-
-4.  **Verify Webhook Processing:**
-    *   Show the microservice's console/logs. You should see log entries indicating: `Received Chapa webhook`, `Chapa webhook signature verified successfully`, `Chapa payment verification successful`, `Payment status updated to SUCCESS`, and `Property approved via Property Listing Service.`
-    *   This demonstrates the automated update of payment status and the trigger for listing approval.
-
-5.  **Check Payment Status (Frontend Polling Simulation):**
-    *   **API Call (using `curl` or Postman):**
-        ```bash
-        # Replace <OWNER_JWT_TOKEN> and <PAYMENT_ID> from step 2
-        curl -X GET "http://localhost:8000/api/v1/payments/<PAYMENT_ID>/status" \
-             -H "Authorization: Bearer <OWNER_JWT_TOKEN>"
-        ```
-    *   **Expected Output:** A `200 OK` response with `status: SUCCESS`.
-    *   Explain that a frontend application would typically poll this endpoint to update the user interface in real-time, as shown in the `PaymentStatusChecker.jsx` snippet in the Frontend Integration Guidance section.
-
-6.  **Verify Listing Approval (Conceptual):**
-    *   Explain that at this point, the Property Listing Microservice would have received the approval signal and marked the property as available for tenant searches.
-
-7.  **Demonstrate Multilingual Notifications (Conceptual):**
-    *   Explain that the landlord would have received an email/SMS notification in their `preferred_language` (e.g., Amharic) confirming the payment success and listing approval. Refer to the `app/services/notification.py` file to show the different language templates.
-
-8.  **Health Check Demonstration:**
-    *   **API Call:**
-        ```bash
-        curl -X GET "http://localhost:8000/api/v1/health"
-        ```
-    *   **Expected Output:** A `200 OK` response with `{"status": "healthy", "db": "ok", "chapa_api": "ok"}`.
-    *   Explain that this endpoint is crucial for monitoring the service's operational status in a production environment.
-
-This walkthrough covers the full lifecycle of a payment, showcasing the microservice's core functionalities, security features, and integrations, making it ideal for a school demo.
-
-## Testing
-
-```bash
-pytest
-```
+## License
+This project is licensed under the MIT License. See the `LICENSE` file for details.
