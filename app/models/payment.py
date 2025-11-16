@@ -23,7 +23,7 @@ class Payment(Base):
     property_id: uuid.UUID = Column(UUID(as_uuid=True), nullable=False)
     user_id: uuid.UUID = Column(UUID(as_uuid=True), nullable=False)
     amount: float = Column(DECIMAL(10, 2), nullable=False, default=500.00) # Fixed amount
-    status: PaymentStatus = Column(SQLAlchemyEnum(PaymentStatus, name="payment_status"), nullable=False, default=PaymentStatus.PENDING)
+    status: str = Column(String, nullable=False, default=PaymentStatus.PENDING.value)
     chapa_tx_ref: str = Column(String, nullable=False)
     failure_reason: Optional[str] = Column(String, nullable=True) # New field for Chapa error details
     created_at: datetime = Column(DateTime(timezone=True), server_default=func.now())
