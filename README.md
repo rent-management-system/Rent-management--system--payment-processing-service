@@ -25,20 +25,21 @@
 - [License](#license)
 
 ## Introduction
-The Payment Processing Microservice is a core component of the Rent Management System, responsible for handling all payment-related operations. It facilitates secure and efficient payment initiation, status tracking, and webhook processing, primarily integrating with the Chapa payment gateway. This service ensures that property listing payments are processed, verified, and communicated to relevant services within the ecosystem.
+The Payment Processing Microservice is a core component of the Rent Management System, meticulously designed to handle all payment-related operations with a strong emphasis on leveraging the **Chapa Payment Gateway**. This integration provides a robust, secure, and locally relevant solution for payment initiation, status tracking, and webhook processing. By utilizing Chapa, this service ensures that property listing payments are processed efficiently, verified reliably, and communicated seamlessly to relevant services within the ecosystem, offering a superior payment experience tailored for the Ethiopian market.
 
 ## Features
--   **Payment Initiation**: Securely initiates payments through the Chapa payment gateway.
--   **Idempotency**: Prevents duplicate payment processing for the same request.
--   **Payment Status Tracking**: Monitors and updates the status of payments (PENDING, SUCCESS, FAILED).
--   **Chapa Webhook Handling**: Processes real-time payment status updates from Chapa.
--   **Scheduled Payment Timeout**: Automatically marks pending payments as FAILED after a configurable period.
--   **Inter-Service Communication**: Integrates with User Management, Property Listing, and Notification services.
--   **Authentication & Authorization**: Secures API endpoints using JWT and API keys.
--   **Caching**: Utilizes Redis for caching user authentication data to improve performance.
--   **Rate Limiting**: Implements API rate limiting using Redis to prevent abuse.
--   **Structured Logging**: Provides detailed, structured logs for better observability and debugging.
--   **Health Checks & Metrics**: Offers endpoints for monitoring service health and operational metrics.
+-   **Chapa Payment Integration**: Seamlessly integrates with the Chapa Payment Gateway for secure and localized payment processing, supporting various local payment methods.
+-   **Payment Initiation**: Securely initiates payments through the Chapa payment gateway, generating unique checkout URLs.
+-   **Idempotency**: Prevents duplicate payment processing for the same request, ensuring reliable transactions.
+-   **Payment Status Tracking**: Monitors and updates the status of payments (PENDING, SUCCESS, FAILED) in real-time.
+-   **Chapa Webhook Handling**: Processes real-time payment status updates from Chapa via secure webhooks, ensuring immediate reflection of payment outcomes.
+-   **Scheduled Payment Timeout**: Automatically marks pending payments as FAILED after a configurable period, maintaining data accuracy.
+-   **Inter-Service Communication**: Integrates with User Management, Property Listing, and Notification services for a cohesive ecosystem.
+-   **Authentication & Authorization**: Secures API endpoints using JWT and API keys for robust access control.
+-   **Caching**: Utilizes Redis for caching user authentication data to improve performance and reduce load on upstream services.
+-   **Rate Limiting**: Implements API rate limiting using Redis to protect against abuse and ensure service stability.
+-   **Structured Logging**: Provides detailed, structured logs for better observability, debugging, and monitoring.
+-   **Health Checks & Metrics**: Offers endpoints for monitoring service health and operational metrics, ensuring high availability.
 
 ## Architecture
 The Payment Processing Microservice operates within a broader microservices ecosystem. Below is a C4 Context diagram illustrating its interactions with other key systems.
@@ -225,6 +226,17 @@ The API documentation will be available at `http://localhost:8000/docs` (Swagger
     -   **Responses**:
         -   `200 OK`: Returns a JSON object with various metrics.
 
+## Chapa Payment Gateway Integration
+This microservice deeply integrates with the **Chapa Payment Gateway**, a leading payment solution tailored for the Ethiopian market. This integration is a cornerstone of the service, offering several key advantages:
+
+-   **Localized Payment Options**: Chapa enables support for various local payment methods, making the payment process accessible and convenient for users in Ethiopia.
+-   **Seamless Checkout Experience**: By leveraging Chapa's API, the service provides a smooth and secure checkout flow, redirecting users to Chapa's hosted payment page and handling post-payment redirects back to the frontend.
+-   **Real-time Status Updates**: Chapa's robust webhook system allows the microservice to receive instant notifications on payment status changes (success, failure, pending), ensuring that payment records are always up-to-date.
+-   **Enhanced Security**: The integration includes webhook signature verification, adding an extra layer of security to ensure that incoming webhook notifications are legitimate and untampered.
+-   **Reliable Transaction Verification**: Beyond webhooks, the service actively verifies payment statuses with Chapa's API, providing a double-check mechanism for critical transactions.
+
+This strategic integration with Chapa not only streamlines payment processing but also significantly enhances the user experience by providing a trusted and efficient payment infrastructure.
+
 ## Scheduled Tasks
 The service includes an asynchronous scheduler (`APScheduler`) to run background tasks:
 -   **`timeout_pending_payments`**: Runs every 24 hours. It queries the database for payments with `PENDING` status that were created more than `PAYMENT_TIMEOUT_DAYS` (configured in `.env`) ago and updates their status to `FAILED`. It also attempts to notify the Property Listing Service about these failed payments.
@@ -262,3 +274,8 @@ Contributions are welcome! Please follow standard GitHub flow:
 
 ## License
 This project is licensed under the MIT License. See the `LICENSE` file for details.
+
+## Contact
+For any inquiries or support, please reach out to the developer:
+-   **Email**: dagiteferi2011@gmail.com
+-   **WhatsApp**: +251920362324
