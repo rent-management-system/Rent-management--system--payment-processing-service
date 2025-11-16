@@ -113,7 +113,7 @@ FRONTEND_REDIRECT_URL="http://localhost:3000/payment-status" # Frontend URL for 
 ### Installation
 1.  **Clone the repository**:
     ```bash
-    git clone <repository_url>
+    git clone https://github.com/rent-management-system/Rent-management--system--payment-processing-service
     cd Rent-management--system -payment-processing-service
     ```
 
