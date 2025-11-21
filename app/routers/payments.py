@@ -1,10 +1,11 @@
+# Optional rate limit dependency: applies rate limiting only if FastAPILimiter is initialized
 import uuid
 from datetime import datetime, timedelta
 from collections import defaultdict
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Header, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 import httpx
 from app.config import settings
 from app.dependencies.auth import get_authenticated_entity, get_current_user # 
@@ -20,7 +21,21 @@ import base64 # Import base64
 
 # For rate limiting
 from fastapi_limiter.depends import RateLimiter
+from fastapi_limiter import FastAPILimiter
 
+
+"""
+Rate limit guard is defined after imports to avoid NameError on type annotations.
+"""
+async def rate_limit_guard(request: Request):
+    try:
+        if getattr(FastAPILimiter, "redis", None):
+            limiter = RateLimiter(times=10, seconds=60)
+            return await limiter(request)
+    except Exception as e:
+        logger.warning("Rate limiter unavailable; skipping for this request.", error=str(e), service="payment")
+        return None
+    return None
 
 router = APIRouter()
 
@@ -104,16 +119,49 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     return health_status
 
 @router.get("/metrics", summary="Service Metrics")
-async def get_metrics():
+async def get_metrics(db: AsyncSession = Depends(get_db)):
     """
-    Returns in-memory metrics for demo purposes.
+    Returns calculated metrics from the database, plus in-memory call counters.
+    Adds total_revenue = sum of amounts for successful payments.
     """
     logger.info("Metrics endpoint accessed", service="payment")
+
+    # Database-derived metrics (exact values)
+    total_payments_result = await db.execute(select(func.count()).select_from(Payment))
+    total_payments = total_payments_result.scalar_one() or 0
+
+    pending_payments_result = await db.execute(
+        select(func.count()).select_from(Payment).where(Payment.status == PaymentStatus.PENDING)
+    )
+    pending_payments = pending_payments_result.scalar_one() or 0
+
+    success_payments_result = await db.execute(
+        select(func.count()).select_from(Payment).where(Payment.status == PaymentStatus.SUCCESS)
+    )
+    success_payments = success_payments_result.scalar_one() or 0
+
+    failed_payments_result = await db.execute(
+        select(func.count()).select_from(Payment).where(Payment.status == PaymentStatus.FAILED)
+    )
+    failed_payments = failed_payments_result.scalar_one() or 0
+
+    # Sum of amounts of successful payments; cast to float for JSON serialization
+    total_revenue_result = await db.execute(
+        select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.status == PaymentStatus.SUCCESS)
+    )
+    total_revenue_raw = total_revenue_result.scalar_one() or 0
+    try:
+        total_revenue = float(total_revenue_raw)
+    except Exception:
+        total_revenue = 0.0
+
     return {
-        "total_payments": metrics_counters["total_payments"],
-        "pending_payments": metrics_counters["pending_payments"],
-        "success_payments": metrics_counters["success_payments"],
-        "failed_payments": metrics_counters["failed_payments"],
+        "total_payments": total_payments,
+        "pending_payments": pending_payments,
+        "success_payments": success_payments,
+        "failed_payments": failed_payments,
+        "total_revenue": total_revenue,
+        # In-memory counters retained for operational insights
         "webhook_calls": metrics_counters["webhook_calls"],
         "initiate_calls": metrics_counters["initiate_calls"],
         "status_calls": metrics_counters["status_calls"],
@@ -123,7 +171,7 @@ async def get_metrics():
 @router.post("/payments/initiate", 
              response_model=PaymentResponse, 
              status_code=status.HTTP_202_ACCEPTED, 
-             dependencies=[Depends(RateLimiter(times=10, seconds=60))])
+             dependencies=[Depends(rate_limit_guard)])
 async def initiate_payment(
     payment_create: PaymentCreate,
     authenticated_entity: UserAuthResponse = Depends(get_authenticated_entity),

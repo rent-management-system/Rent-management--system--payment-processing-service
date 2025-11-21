@@ -13,7 +13,7 @@ from app.utils.retry import async_retry
 from app.core.logging import logger # Correct import for logger
 from app.core.security import decrypt_data # Import decrypt_data
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -33,7 +33,10 @@ async def get_api_key(api_key: str = Depends(api_key_header)) -> str:
             detail="Invalid API Key"
         )
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserAuthResponse:
+async def get_current_user(token: str | None = Depends(oauth2_scheme)) -> UserAuthResponse:
+    # If no token provided, enforce JWT for endpoints that require it
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -128,15 +131,24 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserAuthRespo
     return UserAuthResponse(**user_data)
 
 
-async def get_current_owner(current_user: UserAuthResponse = Depends(get_current_user)) -> UserAuthResponse:
+async def get_current_owner(current_user: Optional[UserAuthResponse] = Depends(get_current_user)) -> UserAuthResponse:
+    if current_user is None:
+        logger.warning("Attempt to perform owner action without JWT token.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
     if current_user.role.lower() != "owner":
         logger.warning("Attempt to perform owner action by non-owner.", user_id=current_user.user_id, role=current_user.role)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Owners can perform this action")
     return current_user
 
+async def get_optional_user(token: str | None = Depends(oauth2_scheme)) -> Optional[UserAuthResponse]:
+    """Like get_current_user, but returns None if no token is provided."""
+    if not token:
+        return None
+    return await get_current_user(token)
+
 async def get_authenticated_entity(
     api_key: Optional[str] = Depends(get_api_key),
-    owner_from_jwt: Optional[UserAuthResponse] = Depends(get_current_owner) # This will be None if not an owner or token invalid
+    owner_from_jwt: Optional[UserAuthResponse] = Depends(get_optional_user) # May be None if no token
 ) -> UserAuthResponse:
     """
     Authenticates a request using either an API Key (for service-to-service)
@@ -156,8 +168,8 @@ async def get_authenticated_entity(
         )
     
     if owner_from_jwt:
-        # If an owner was successfully authenticated via JWT
-        logger.info("Request authenticated via JWT (Owner role).")
+        # If a user was authenticated via JWT, ensure Owner role for owner-protected endpoints at route level
+        logger.info("Request authenticated via JWT.")
         return owner_from_jwt
     
     # If neither API key nor valid JWT owner token is provided

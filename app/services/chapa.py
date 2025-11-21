@@ -22,7 +22,7 @@ class ChapaService:
             "Content-Type": "application/json"
         }
 
-    @async_retry(max_attempts=3, delay=1, exceptions=(httpx.RequestError,))
+    @async_retry(max_attempts=3, delay=1, exceptions=(httpx.RequestError, httpx.HTTPStatusError))
     async def initialize_payment(self, payment_data: ChapaInitializeRequest) -> ChapaInitializeResponse:
         """Initializes a payment transaction with Chapa."""
         url = f"{self.base_url}/transaction/initialize" # Changed URL
@@ -47,7 +47,7 @@ class ChapaService:
                     logger.error("Chapa initialize_payment client error; will not retry", tx_ref=payment_data.tx_ref, status_code=exc.response.status_code, response_text=exc.response.text)
                     # Re-raise as HTTPException for FastAPI to catch
                     raise HTTPException(status_code=exc.response.status_code, detail=f"Chapa payment initialization failed: {exc.response.text}")
-                # For 5xx server errors, re-raise to allow retry decorator to catch
+                # For 5xx server errors, re-raise to allow retry decorator to catch (now included in retry exceptions)
                 logger.error("Chapa initialize_payment HTTPStatusError (server error)", tx_ref=payment_data.tx_ref, status_code=exc.response.status_code, response_text=exc.response.text)
                 raise
                 
