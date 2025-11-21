@@ -63,8 +63,8 @@ class UserAuthResponse(BaseModel):
     user_id: uuid.UUID
     role: str
     email: str
-    phone_number: str
-    preferred_language: str
+    phone_number: Optional[str] = None
+    preferred_language: Optional[str] = None
 
 class NotificationPayload(BaseModel):
     user_id: uuid.UUID
